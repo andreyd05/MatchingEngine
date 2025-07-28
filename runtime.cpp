@@ -4,7 +4,7 @@
 
 std::queue<Order> buy_queue;
 std::queue<Order> sell_queue;
-PriceLevel market_buy_book(0);
+// PriceLevel market_buy_book(0);
 
 std::mutex buy_queue_mutex;
 std::mutex market_buy_book_mutex;

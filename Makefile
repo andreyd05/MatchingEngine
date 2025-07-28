@@ -19,6 +19,7 @@ all: $(TARGET)
 # Link all objects
 $(TARGET): $(OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^
+	rm -f $(OBJS)
 
 # Compile each .cpp to .o
 %.o: %.cpp
