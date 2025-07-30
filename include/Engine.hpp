@@ -7,9 +7,10 @@
 
 class Engine {
     public:
-        std::unordered_map<std::string, OrderBook> order_books;
+        static std::unordered_map<std::string, OrderBook> order_books;
 
-
+        void AddBook(std::string n);
+        bool BookExists(std::string n);
 
 };
 

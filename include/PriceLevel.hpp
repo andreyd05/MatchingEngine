@@ -9,11 +9,13 @@
 
 class PriceLevel {
     public:
+        PriceLevel(double p): price(p) {};
+
         double price;
         std::queue<Order> orders;
 
-        
-
+        void AddOrder(Order &o);
+        Order PopOrder(void);
 
 };
 
