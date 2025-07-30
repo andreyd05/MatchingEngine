@@ -11,6 +11,7 @@
 class OrderBook {
     public:
         OrderBook(std::string n): name(n) {};
+        OrderBook(void) {};
 
         std::string name;
         std::map<double, PriceLevel> buy_price_levels;

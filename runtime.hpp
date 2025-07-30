@@ -10,6 +10,7 @@ enum class OrderType {BUY, SELL};
 struct IncomingOrder {
     std::string name;
     OrderType order_type;
+    double price;
     uint64_t id;
     uint32_t qty;
 };
