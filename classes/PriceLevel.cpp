@@ -6,7 +6,7 @@ void PriceLevel::AddOrder(Order &o) {
 }
 
 
-Order PriceLevel::PopOrder(void) {
+Order PriceLevel::GetOrder(void) {
     Order o = orders.front();
     orders.pop();
     return o;

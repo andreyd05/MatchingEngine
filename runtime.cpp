@@ -4,16 +4,17 @@
 #include <thread>
 #include <condition_variable>
 #include <iostream>
+#include <unistd.h>
 
-std::queue<IncomingOrder> buy_queue;
-std::queue<IncomingOrder> sell_queue;
-PriceLevel market_buy_book(0);
+static std::queue<IncomingOrder> buy_queue;
+static std::queue<IncomingOrder> sell_queue;
+static PriceLevel market_buy_book(0);
 
-std::mutex buy_queue_mutex;
-std::mutex market_buy_book_mutex;
-std::mutex sell_queue_mutex;
-std::mutex engine_mutex;
-bool run_threads = true;
+static std::mutex buy_queue_mutex;
+static std::mutex market_buy_book_mutex;
+static std::mutex sell_queue_mutex;
+static std::mutex engine_mutex;
+static bool run_threads = true;
 
 // routines
 void network_parser_thread_fn(void);
@@ -38,6 +39,25 @@ int main() {
     std::thread network_parser(network_parser_thread_fn);
     std::thread buy_parser(buy_parser_thread_fn);
     std::thread sell_parser(sell_parser_thread_fn);
+
+
+
+    IncomingOrder o;
+    o.id = 1;
+    o.name = "GOOG";
+    o.order_type = OrderType::SELL;
+    o.price = 1000;
+    o.qty = 1;
+
+    sell_queue_mutex.lock();
+    printf("Placing sell order..\n");
+    sell_queue.push(o);
+    printf("Placed\n");
+    sell_queue_mutex.unlock();
+
+    usleep(1000000);
+    
+
 
 
 
@@ -69,68 +89,166 @@ void buy_parser_thread_fn(void) {
         // mutex
         buy_queue_mutex.lock();
 
-        if(!buy_queue.empty()) {
-            incoming_order = buy_queue.front();
-            buy_queue.pop();
-
+        if(buy_queue.empty()) {
             // mutex
-            buy_queue_mutex.unlock();            
-            engine_mutex.lock();
+            buy_queue_mutex.unlock();
+            continue;
+        }
 
-            OrderBook &book = Engine::order_books[incoming_order.name];
-            std::map<double, PriceLevel, std::greater<double>>& price_map = book.sell_price_levels;
-            
-            // mutex
-            engine_mutex.unlock();
+
+        incoming_order = buy_queue.front();
+        buy_queue.pop();
+
+        // mutex
+        buy_queue_mutex.unlock();
+        engine_mutex.lock();
+
+        OrderBook &book = Engine::order_books[incoming_order.name];
+        std::map<double, PriceLevel, std::greater<double>> &price_map = book.sell_price_levels;
+        
+        // mutex
+        engine_mutex.unlock();
+        
+        while(!price_map.empty() && incoming_order.qty > 0) {// handle running out of sell orders after this block
             book.book_mutex.lock();
+            
+            if(price_map.begin()->second.price > incoming_order.price) {
+                // Add sell order to queue since all buy orders are under price
+                Order _o;
+                _o.id = incoming_order.id;
+                _o.qty = incoming_order.qty;
+                
+                book.buy_price_levels[incoming_order.price].orders.push(_o);
+                book.book_mutex.unlock();
+                continue;
+            }
 
-            book.name = incoming_order.name;
+            // book.name = incoming_order.name;
             
             while(!price_map.empty() && incoming_order.qty > 0) {
                 PriceLevel &price_level = price_map.begin()->second;
 
-                if(price_level.price <= incoming_order.price) {
-                    while(!price_level.orders.empty() && incoming_order.qty > 0) {
-                        Order &sell_order = price_level.orders.front();
+                while(!price_level.orders.empty() && incoming_order.qty > 0) {
+                    Order &sell_order = price_level.orders.front();
 
-                        if(sell_order.qty >= incoming_order.qty) {
-                            sell_order.qty -= incoming_order.qty;
-                            incoming_order.qty = 0;
-                            send_order_back(incoming_order.id);
-                        } else {
-                            incoming_order.qty -= sell_order.qty;
-                            price_level.orders.pop();
-                        }
+                    if(sell_order.qty >= incoming_order.qty) {
+                        sell_order.qty -= incoming_order.qty;
+                        send_order_back(incoming_order.id);
+                        incoming_order.qty = 0;
+                    } else {
+                        incoming_order.qty -= sell_order.qty;
+                        send_order_back(sell_order.id);
+                        price_level.orders.pop();
                     }
                 }
             }
 
+            if(price_map.empty()) {
 
+            }
 
+            if(incoming_order.qty > 0) {
+                // Add sell order to queue since no sell offers remain
+                Order _o;
+                _o.id = incoming_order.id;
+                _o.qty = incoming_order.qty;
+                book.sell_price_levels[incoming_order.price].orders.push(_o);
 
-            // mutex
-            book.book_mutex.unlock();
-
-
-
-
-
-
-
-        } else {
-            // mutex
-            buy_queue_mutex.unlock();
+                book.book_mutex.unlock();
+                continue;
+            }
         }
 
-
-
-
-
+        // mutex
+        book.book_mutex.unlock();
     }
+
+    return;
 }
 
 // Takes orders from sell queue and processes/matches them
 void sell_parser_thread_fn(void) {
+    IncomingOrder incoming_order;
+
+    while(run_threads) {
+        // mutex
+        sell_queue_mutex.lock();
+
+        if(sell_queue.empty()) {
+            // mutex
+            sell_queue_mutex.unlock();
+            continue;
+        }
+
+
+        incoming_order = sell_queue.front();
+        sell_queue.pop();
+
+        // mutex
+        sell_queue_mutex.unlock();            
+        engine_mutex.lock();
+
+        OrderBook &book = Engine::order_books[incoming_order.name];
+        std::map<double, PriceLevel> &price_map = book.buy_price_levels;
+        
+        // mutex
+        engine_mutex.unlock();
+        
+        while(!price_map.empty() && incoming_order.qty > 0) {
+            book.book_mutex.lock();
+            
+            if(price_map.begin()->second.price < incoming_order.price) {
+                // Add sell order to queue since all buy orders are under price
+                Order _o;
+                _o.id = incoming_order.id;
+                _o.qty = incoming_order.qty;
+                
+                book.sell_price_levels[incoming_order.price].orders.push(_o);
+                book.book_mutex.unlock();
+                continue;
+            }
+
+            // book.name = incoming_order.name;
+            
+            while(!price_map.empty() && incoming_order.qty > 0) {
+                PriceLevel &price_level = price_map.begin()->second;
+
+                while(!price_level.orders.empty() && incoming_order.qty > 0) {
+                    Order &sell_order = price_level.orders.front();
+
+                    if(sell_order.qty >= incoming_order.qty) {
+                        sell_order.qty -= incoming_order.qty;
+                        send_order_back(incoming_order.id);
+                        incoming_order.qty = 0;
+                    } else {
+                        incoming_order.qty -= sell_order.qty;
+                        send_order_back(sell_order.id);
+                        price_level.orders.pop();
+                    }
+                }
+            }
+
+            if(price_map.empty()) {
+
+            }
+
+            if(incoming_order.qty > 0) {
+                // Add sell order to queue since no sell offers remain
+                Order _o;
+                _o.id = incoming_order.id;
+                _o.qty = incoming_order.qty;
+
+                book.sell_price_levels[incoming_order.price].orders.push(_o);
+
+                book.book_mutex.unlock();
+                continue;
+            }
+        }
+
+        // mutex
+        book.book_mutex.unlock();
+    }
+
     return;
 }
 
